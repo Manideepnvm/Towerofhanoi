@@ -3,296 +3,363 @@ import cv2
 import numpy as np
 import time
 import math
+import random
 from constants import *
 
 class GameRenderer:
     def __init__(self, screen_width, screen_height):
         pygame.init()
-        pygame.display.set_caption("Tower of Hanoi - Gesture Control")
+        pygame.display.set_caption("Tower of Hanoi - Cyberpunk Edition")
         self.width = screen_width
         self.height = screen_height
         self.screen = pygame.display.set_mode((self.width, self.height), pygame.RESIZABLE)
         self.clock = pygame.time.Clock()
         
-        # Load fonts
-        self.title_font = pygame.font.SysFont('Arial', 48, bold=True)
-        self.font = pygame.font.SysFont('Arial', 28)
-        self.small_font = pygame.font.SysFont('Arial', 20)
+        # Load custom fonts (fallback to system safe)
+        self.title_font = pygame.font.SysFont('Arial', 56, bold=True)
+        self.font = pygame.font.SysFont('Arial', 32)
+        self.small_font = pygame.font.SysFont('Verdana', 18)
         
         self.camera_feed_surface = None
-        self.play_button_rect = pygame.Rect(0, 0, 200, 60)
-        # Position needs update on resize/draw
+        self.play_button_rect = pygame.Rect(0, 0, 240, 70)
+        
+        # Particle System
+        # List of {'x', 'y', 'vx', 'vy', 'life', 'color', 'size'}
+        self.particles = []
+        
+        # Cached Background
+        self.background_surface = None
         
     def handle_resize(self, new_width, new_height):
         self.width = new_width
         self.height = new_height
         self.screen = pygame.display.set_mode((self.width, self.height), pygame.RESIZABLE)
+        self.background_surface = None # Recreate BG on resize
         
     def prepare_camera_surface(self, frame):
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         frame = np.rot90(frame)
+        frame = cv2.resize(frame, (240, 180)) # Higher res preview
+        
+        # Apply a cool color filter to camera (Matrix style)
+        # frame[:, :, 0] = 0 # Remove Red
+        # frame[:, :, 2] = list(np.clip(frame[:, :, 2] * 1.2, 0, 255)) # Boost Blue
+        
         frame = pygame.surfarray.make_surface(frame)
-        self.camera_feed_surface = pygame.transform.scale(frame, (200, 150))
+        self.camera_feed_surface = frame
         
-    def draw_background_gradient(self):
-        # Start with solid black
-        self.screen.fill(COLOR_BLACK)
-        
-        # Draw gradient
-        for i in range(self.height):
-             # Subtle blue gradient
-            gradient_color = (15, 15, max(10, min(50, 30 + i // 10)), 255)
-            pygame.draw.line(self.screen, gradient_color, (0, i), (self.width, i))
+    def create_background(self):
+        if self.background_surface is None:
+            self.background_surface = pygame.Surface((self.width, self.height))
             
-    def draw_overlay(self):
-        overlay = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
-        overlay.fill(COLOR_OVERLAY)
-        self.screen.blit(overlay, (0, 0))
+            # 1. Radial Gradient (approximate with circles)
+            cx, cy = self.width // 2, self.height // 2
+            max_dist = math.sqrt(cx**2 + cy**2)
+            
+            # Draw darker circles from outside in? No, fill dark, draw light center
+            self.background_surface.fill(COLOR_BG_DARK)
+            
+            # Draw a subtle glow in center
+            glow_surf = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
+            for r in range(int(max_dist), 0, -20):
+                alpha = int(20 * (1 - r/max_dist))
+                if alpha > 0:
+                    pygame.draw.circle(glow_surf, (*COLOR_BG_LIGHT, alpha), (cx, cy), r)
+            self.background_surface.blit(glow_surf, (0,0))
+            
+            # 2. Grid lines (Perspective or flat? Flat is safer for performace)
+            grid_surf = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
+            grid_spacing = 40
+            for x in range(0, self.width, grid_spacing):
+                pygame.draw.line(grid_surf, COLOR_GRID, (x, 0), (x, self.height), 1)
+            for y in range(0, self.height, grid_spacing):
+                pygame.draw.line(grid_surf, COLOR_GRID, (0, y), (self.width, y), 1)
+            self.background_surface.blit(grid_surf, (0,0))
+
+    def update_particles(self, dt):
+        # Update existing
+        alive_particles = []
+        for p in self.particles:
+            p['x'] += p['vx'] * dt * 60
+            p['y'] += p['vy'] * dt * 60
+            p['life'] -= dt
+            if p['life'] > 0:
+                alive_particles.append(p)
+        self.particles = alive_particles
+
+    def spawn_particles(self, x, y, color, count=10):
+        for _ in range(count):
+            angle = random.uniform(0, math.pi * 2)
+            speed = random.uniform(2, 6)
+            self.particles.append({
+                'x': x,
+                'y': y,
+                'vx': math.cos(angle) * speed,
+                'vy': math.sin(angle) * speed,
+                'life': random.uniform(0.5, 1.0),
+                'color': color,
+                'size': random.randint(2, 5)
+            })
+
+    def draw_particles(self):
+        for p in self.particles:
+            alpha = int(255 * (p['life'] / PARTICLE_LIFETIME))
+            s = pygame.Surface((p['size']*2, p['size']*2), pygame.SRCALPHA)
+            pygame.draw.circle(s, (*p['color'], alpha), (p['size'], p['size']), p['size'])
+            self.screen.blit(s, (int(p['x']-p['size']), int(p['y']-p['size'])))
+            
+    def draw_glass_panel(self, rect, border_radius=15):
+        # Glassmorphism effect:
+        # 1. Dark semi-transparent fill
+        # 2. Bright subtle border
+        
+        s = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
+        s.fill((20, 20, 30, 200)) # Slightly darker and more opaque for clarity
+        pygame.draw.rect(s, (100, 150, 255, 30), s.get_rect(), border_radius=border_radius) # Inner slight wash
+        
+        self.screen.blit(s, rect)
+        
+        # Outer Border
+        pygame.draw.rect(self.screen, (100, 200, 255, 80), rect, 1, border_radius=border_radius)
+
+    def draw_neon_text(self, text, font, color, center_pos, glow_color=(0, 200, 255)):
+        # Main text
+        txt = font.render(text, True, color)
+        rect = txt.get_rect(center=center_pos)
+        
+        # Glow (Reduced count for performance, increased opacity check)
+        glow = font.render(text, True, (*glow_color, 40))
+        self.screen.blit(glow, (rect.x - 2, rect.y - 2))
+        self.screen.blit(glow, (rect.x + 2, rect.y + 2))
+            
+        self.screen.blit(txt, rect)
+        return rect
         
     def draw_camera_preview(self):
          if self.camera_feed_surface:
-            border_rect = pygame.Rect(self.width - 230, 10, 220, 170)
+            rect_w, rect_h = 240, 180
+            padding = 10
+            x = self.width - rect_w - 30
+            y = 30
             
-            # Glow
-            for i in range(3, 0, -1):
-                glow_rect = border_rect.copy()
-                glow_rect.inflate_ip(i*2, i*2)
-                pygame.draw.rect(self.screen, (100, 100, 200, 50-i*10), glow_rect, border_radius=10)
+            panel_rect = pygame.Rect(x - padding, y - padding, rect_w + padding*2, rect_h + padding*2 + 30)
+            self.draw_glass_panel(panel_rect, 10)
             
-            # Border
-            pygame.draw.rect(self.screen, (50, 50, 100, 180), border_rect, border_radius=8)
-            pygame.draw.rect(self.screen, (100, 149, 237), border_rect, 2, border_radius=8)
+            # Display feed
+            self.screen.blit(self.camera_feed_surface, (x, y))
             
-            self.screen.blit(self.camera_feed_surface, (self.width - 220, 20))
+            # Scanlines effect
+            scanlines = pygame.Surface((rect_w, rect_h), pygame.SRCALPHA)
+            for i in range(0, rect_h, 4):
+                pygame.draw.line(scanlines, (0, 0, 0, 50), (0, i), (rect_w, i))
+            self.screen.blit(scanlines, (x, y))
             
             # Label
-            camera_bg = pygame.Surface((120, 25), pygame.SRCALPHA)
-            camera_bg.fill((0, 0, 0, 150))
-            camera_bg_rect = camera_bg.get_rect(center=(border_rect.centerx, border_rect.bottom + 15))
-            pygame.draw.rect(camera_bg, (0, 0, 0, 150), camera_bg.get_rect(), border_radius=8)
-            self.screen.blit(camera_bg, camera_bg_rect)
-            
-            label = self.small_font.render("Camera Preview", True, COLOR_TEXT_GRAY)
-            label_rect = label.get_rect(center=camera_bg_rect.center)
-            self.screen.blit(label, label_rect)
-            
-    def draw_play_screen(self, game_state):
-        self.draw_background_gradient()
-        self.draw_overlay()
-        
-        # Title
-        title_shadow = self.title_font.render("Tower of Hanoi", True, COLOR_TITLE_SHADOW)
-        title_text = self.title_font.render("Tower of Hanoi", True, COLOR_WHITE)
-        subtitle_text = self.font.render("Gesture Controlled", True, (180, 180, 180))
-        
-        title_rect = title_text.get_rect(center=(self.width//2, self.height//4))
-        shadow_rect = title_rect.copy()
-        shadow_rect.x += 2; shadow_rect.y += 2
-        
-        subtitle_rect = subtitle_text.get_rect(center=(self.width//2, self.height//4 + 60))
-        
-        self.screen.blit(title_shadow, shadow_rect)
-        self.screen.blit(title_text, title_rect)
-        self.screen.blit(subtitle_text, subtitle_rect)
-        
-        # Instructions
-        instruction_box = pygame.Surface((600, 220), pygame.SRCALPHA)
-        instruction_box.fill((0, 0, 0, 150))
-        instruction_rect = instruction_box.get_rect(center=(self.width//2, self.height//2 - 80))
-        pygame.draw.rect(instruction_box, (65, 105, 225, 50), instruction_box.get_rect(), 2, border_radius=15)
-        self.screen.blit(instruction_box, instruction_rect)
-        
-        instr_title = self.font.render("How to Play", True, (180, 180, 255))
-        self.screen.blit(instr_title, instr_title.get_rect(center=(self.width//2, instruction_rect.top + 25)))
-        
-        instructions = [
-            "Control with gestures:",
-            "• Pinch (thumb+index) to pick up/place",
-            "• Hold pinch and move hand",
-            "• Win: Move all disks to right tower",
-            "", ""
-        ]
-        
-        for i, line in enumerate(instructions):
-            text = self.small_font.render(line, True, COLOR_TEXT_GRAY)
-            self.screen.blit(text, (instruction_rect.left + 30, instruction_rect.top + 55 + i*26))
-            
-        # Play Button
-        self.play_button_rect.center = (self.width//2, self.height//2 + 120)
-        
-        # Glow
-        glow_size = int(5 + math.sin(time.time() * 3) * 2)
-        for i in range(glow_size, 0, -1):
-            if 150 - i*20 > 0:
-                 pygame.draw.rect(self.screen, (65, 105, 225, 150-i*20), 
-                                 self.play_button_rect.inflate(i*2, i*2), border_radius=30+i)
+            lbl = self.small_font.render("VISUAL SENSOR", True, COLOR_TEXT_DIM)
+            self.screen.blit(lbl, (panel_rect.centerx - lbl.get_width()//2, y + rect_h + 8))
 
-        pygame.draw.rect(self.screen, (65, 105, 225, 230), self.play_button_rect, border_radius=30)
-        pygame.draw.rect(self.screen, (100, 149, 237), self.play_button_rect, 3, border_radius=30)
+    def draw_tower(self, x_pos, y_base, disks):
+        # 1. Base (Glowing Platform)
+        base_rect = pygame.Rect(x_pos - TOWER_BASE_WIDTH//2, y_base + 2, TOWER_BASE_WIDTH, TOWER_BASE_HEIGHT)
+        pygame.draw.rect(self.screen, COLOR_BASE_GLOW, base_rect, border_radius=3)
         
-        shadow = self.font.render("PLAY", True, COLOR_TITLE_SHADOW)
-        text = self.font.render("PLAY", True, COLOR_WHITE)
-        self.screen.blit(shadow, shadow.get_rect(center=(self.play_button_rect.centerx+1, self.play_button_rect.centery+1)))
-        self.screen.blit(text, text.get_rect(center=self.play_button_rect.center))
+        # 2. Rod (Neon Line)
+        rod_rect = pygame.Rect(x_pos - TOWER_WIDTH//2, y_base - TOWER_HEIGHT, TOWER_WIDTH, TOWER_HEIGHT)
+        pygame.draw.rect(self.screen, COLOR_TOWER_CORE, rod_rect, border_radius=TOWER_WIDTH//2)
         
-        # Difficulty Controls
-        diff_box = pygame.Rect(0, 0, 300, 40)
-        diff_box.center = (self.width//2, self.height//2 + 200)
+        # Glow for rod
+        s = pygame.Surface((TOWER_WIDTH+10, TOWER_HEIGHT), pygame.SRCALPHA)
+        pygame.draw.rect(s, (*COLOR_TOWER_GLOW, 100), s.get_rect(), border_radius=TOWER_WIDTH//2)
+        self.screen.blit(s, (rod_rect.x - 5, rod_rect.y))
         
-        pygame.draw.rect(self.screen, (0, 0, 0, 150), diff_box, border_radius=15)
-        pygame.draw.rect(self.screen, (100, 149, 237, 150), diff_box, 1, border_radius=15)
+        # 4. Disks
+        for j, disk in enumerate(disks):
+            self.draw_disk(x_pos, y_base - (j + 1) * DISK_HEIGHT + DISK_HEIGHT//2, disk)
+
+    def draw_disk(self, cx, cy, disk_val, alpha=255):
+        disk_w = BASE_DISK_WIDTH - (disk_val - 1) * 35
+        rect = pygame.Rect(0, 0, disk_w, DISK_HEIGHT)
+        rect.center = (cx, cy) # CY is center of disk now
         
-        # Arrows (Logic handled here for drawing, input in main)
-        arrow_left = pygame.Rect(diff_box.left + 10, diff_box.top, 40, 40)
-        arrow_right = pygame.Rect(diff_box.right - 50, diff_box.top, 40, 40)
+        color = DISK_COLORS[(disk_val - 1) % len(DISK_COLORS)]
         
-        mouse_pos = pygame.mouse.get_pos()
-        left_col = COLOR_WHITE if arrow_left.collidepoint(mouse_pos) else COLOR_TEXT_GRAY
-        right_col = COLOR_WHITE if arrow_right.collidepoint(mouse_pos) else COLOR_TEXT_GRAY
+        # Main Body (Gradient-ish)
+        pygame.draw.rect(self.screen, color, rect, border_radius=DISK_ROUNDING)
         
-        pygame.draw.polygon(self.screen, left_col, 
-                           [(arrow_left.centerx-10, arrow_left.centery),
-                            (arrow_left.centerx+5, arrow_left.centery-10),
-                            (arrow_left.centerx+5, arrow_left.centery+10)])
-                            
-        pygame.draw.polygon(self.screen, right_col, 
-                           [(arrow_right.centerx+10, arrow_right.centery),
-                            (arrow_right.centerx-5, arrow_right.centery-10),
-                            (arrow_right.centerx-5, arrow_right.centery+10)])
-                            
-        diff_text = self.font.render(f"Disks: {game_state.num_disks}", True, COLOR_WHITE)
-        self.screen.blit(diff_text, diff_text.get_rect(center=diff_box.center))
+        # Shine (Top half lighter)
+        shine_rect = pygame.Rect(rect.x, rect.y, rect.width, rect.height//2)
+        s = pygame.Surface((rect.width, rect.height//2), pygame.SRCALPHA)
+        pygame.draw.rect(s, (255, 255, 255, 60), s.get_rect(), border_radius=DISK_ROUNDING) # Top Gloss
+        self.screen.blit(s, shine_rect)
         
-        self.draw_camera_preview()
+        # Border (Metallic)
+        pygame.draw.rect(self.screen, (255, 255, 255), rect, 2, border_radius=DISK_ROUNDING)
         
+        # Label
+        lbl = self.small_font.render(str(disk_val), True, (20, 20, 20)) # Dark text on bright neon
+        self.screen.blit(lbl, lbl.get_rect(center=rect.center))
+
     def draw_game_screen(self, game_state):
-        self.screen.fill(COLOR_TRANSPARENT)
+        # Background
+        self.create_background()
+        self.screen.blit(self.background_surface, (0,0))
         
-        # Game Area BG
-        game_area = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
-        game_area.fill((15, 15, 30, 160))
-        self.screen.blit(game_area, (0, 0))
+        # Calculate Vertical Center for Game Stage
+        stage_ground_y = self.height // 2 + 150 # Move towers down a bit
         
-        # HUD: Timer
-        timer_bg = pygame.Surface((150, 40), pygame.SRCALPHA)
-        timer_bg.fill((0, 0, 0, 150))
-        self.screen.blit(timer_bg, (20, 20))
+        # HUD Panel (Top Left) - Improved alignment
+        hud_panel = pygame.Rect(30, 30, 220, 90)
+        self.draw_glass_panel(hud_panel)
         
-        time_text = self.font.render(f"Time: {game_state.elapsed_time:.1f}s", True, COLOR_WHITE)
-        self.screen.blit(time_text, (30, 30))
+        time_text = f"TIME: {game_state.elapsed_time:.1f}"
+        self.draw_neon_text(time_text, self.font, COLOR_TOWER_CORE, (hud_panel.centerx, hud_panel.top + 25))
         
-        # HUD: Moves
-        moves_bg = pygame.Surface((150, 40), pygame.SRCALPHA)
-        moves_bg.fill((0, 0, 0, 150))
-        self.screen.blit(moves_bg, (20, 70))
+        moves_text = f"MOVES: {game_state.moves}"
+        self.draw_neon_text(moves_text, self.font, COLOR_TOWER_CORE, (hud_panel.centerx, hud_panel.bottom - 25))
         
-        moves_text = self.font.render(f"Moves: {game_state.moves}", True, COLOR_WHITE)
-        self.screen.blit(moves_text, (30, 70))
-        
-        # Action Message
+        # Action Message (Top Center)
         now = time.time()
         if game_state.action_message and now - game_state.action_message_time < ACTION_MESSAGE_DURATION:
-            msg_bg = pygame.Surface((500, 40), pygame.SRCALPHA)
-            msg_bg.fill((0, 0, 0, 180))
-            msg_rect = msg_bg.get_rect(center=(self.width//2, 50))
-            self.screen.blit(msg_bg, msg_rect)
+            msg_rect = pygame.Rect(0, 0, 600, 60)
+            msg_rect.center = (self.width//2, 60)
+            self.draw_glass_panel(msg_rect, 10)
+            self.draw_neon_text(game_state.action_message, self.font, COLOR_WHITE, msg_rect.center)
             
-            msg_text = self.font.render(game_state.action_message, True, COLOR_WHITE)
-            self.screen.blit(msg_text, msg_text.get_rect(center=msg_rect.center))
-            
-        # Win or Instructions
-        if game_state.game_won:
-            win_bg = pygame.Surface((400, 120), pygame.SRCALPHA)
-            win_bg.fill((0, 0, 0, 180))
-            win_rect = win_bg.get_rect(center=(self.width//2, 120))
-            self.screen.blit(win_bg, win_rect)
-            
-            win_txt = self.title_font.render("You Win!", True, (255, 215, 0))
-            self.screen.blit(win_txt, win_txt.get_rect(center=(self.width//2, 100)))
-            
-            stats = self.font.render(f"Time: {game_state.elapsed_time:.1f}s | Moves: {game_state.moves}", True, COLOR_WHITE)
-            self.screen.blit(stats, stats.get_rect(center=(self.width//2, 150)))
-        else:
-             instr_bg = pygame.Surface((500, 40), pygame.SRCALPHA)
-             instr_bg.fill((0, 0, 0, 150))
-             instr_rect = instr_bg.get_rect(center=(self.width//2, 100))
-             self.screen.blit(instr_bg, instr_rect)
-             
-             txt = self.font.render("Pinch to pick up and place disks", True, COLOR_TEXT_GRAY)
-             self.screen.blit(txt, txt.get_rect(center=(self.width//2, 100)))
-             
         # Towers
         tower_x_positions = [self.width//4, self.width//2, 3*self.width//4]
         
-        # Base
-        pygame.draw.rect(self.screen, (139, 69, 19), 
-                        (self.width//6, TOWER_Y + TOWER_HEIGHT, 2*self.width//3, 20), 
-                        border_radius=5)
-                        
+        # Base platform connecting towers
+        base_connector = pygame.Rect(self.width//6, stage_ground_y + 7, 2*self.width//3, 4)
+        pygame.draw.rect(self.screen, COLOR_BG_LIGHT, base_connector)
+        
         for i, x in enumerate(tower_x_positions):
-            # Tower pole
-            pygame.draw.rect(self.screen, (180, 180, 180),
-                            (x - TOWER_WIDTH//2, TOWER_Y, TOWER_WIDTH, TOWER_HEIGHT))
-                            
-            # Label
-            lbl_bg = pygame.Surface((30, 30), pygame.SRCALPHA)
-            lbl_bg.fill((0, 0, 0, 150))
-            lbl_rect = lbl_bg.get_rect(center=(x, TOWER_Y + TOWER_HEIGHT + 30))
-            self.screen.blit(lbl_bg, lbl_rect)
+            # Base/Rod
+            self.draw_tower(x, stage_ground_y, game_state.towers[i])
             
-            lbl = self.font.render(f"{i+1}", True, COLOR_WHITE)
-            self.screen.blit(lbl, lbl.get_rect(center=lbl_rect.center))
+            # Correct Label
+            lbl_center = (x, stage_ground_y + 40)
+            self.draw_neon_text(f"NODE {i+1}", self.font, COLOR_TEXT_DIM, lbl_center)
             
-            # Disks
-            for j, disk in enumerate(game_state.towers[i]):
-                disk_w = BASE_DISK_WIDTH - (disk - 1) * 25
-                color = DISK_COLORS[(disk - 1) % len(DISK_COLORS)]
-                disk_y = TOWER_Y + TOWER_HEIGHT - (j + 1) * DISK_HEIGHT
-                
-                disk_rect = pygame.Rect(x - disk_w//2, disk_y, disk_w, DISK_HEIGHT)
-                pygame.draw.rect(self.screen, color, disk_rect, border_radius=10)
-                pygame.draw.rect(self.screen, COLOR_WHITE, disk_rect, 2, border_radius=10)
-                
-                d_lbl = self.font.render(f"{disk}", True, COLOR_WHITE)
-                self.screen.blit(d_lbl, d_lbl.get_rect(center=disk_rect.center))
-                
-        # Disk in Hand
+        # Held Disk
         if game_state.disk_in_hand is not None and game_state.hand_position is not None:
-             disk = game_state.disk_in_hand
-             disk_w = BASE_DISK_WIDTH - (disk - 1) * 25
-             color = DISK_COLORS[(disk - 1) % len(DISK_COLORS)]
+             hx, hy = game_state.hand_position
              
-             hand_x, hand_y = game_state.hand_position
-             # Scale if needed (assuming hand_position is already scaled or we scale here)
-             # NOTE: In our game_state logic we stored raw average xy.
-             # Wait, in app.py we mapped avg_x to screen coords.
-             # Let's check game_state.update_interaction logic.
-             # Ideally game_state should just store raw or normalized, and renderer scales.
-             # But here we will assume game_state.hand_position is in screen coordinates (or we scale it).
-             # Let's adjust logic in main.py to pass correct coordinates to update_interaction.
+             # Draw Ghost target??
+             # For now, just the disk
+             self.draw_disk(hx, hy, game_state.disk_in_hand)
              
-             # Assuming hand_position is (x, y) on screen:
-             sx, sy = hand_x, hand_y # We will handle scaling in Main before passing
+             # Glow under finger
+             pygame.draw.circle(self.screen, (255, 255, 255), (int(hx), int(hy)), 5)
              
-             # Glow
-             glow_rect = pygame.Rect(sx - (disk_w+10)//2, sy - (DISK_HEIGHT+10)//2, disk_w+10, DISK_HEIGHT+10)
-             s = pygame.Surface((glow_rect.width, glow_rect.height), pygame.SRCALPHA)
-             pygame.draw.rect(s, (*color, 100), s.get_rect(), border_radius=15)
-             self.screen.blit(s, glow_rect)
-             
-             # Disk
-             d_rect = pygame.Rect(sx - disk_w//2, sy - DISK_HEIGHT//2, disk_w, DISK_HEIGHT)
-             pygame.draw.rect(self.screen, color, d_rect, border_radius=10)
-             pygame.draw.rect(self.screen, COLOR_WHITE, d_rect, 2, border_radius=10)
-             
-             l = self.font.render(f"{disk}", True, COLOR_WHITE)
-             self.screen.blit(l, l.get_rect(center=d_rect.center))
-
         # Pinch Indicator
         if game_state.hand_position is not None:
-            hx, hy = game_state.hand_position
-            pygame.draw.circle(self.screen, game_state.pinch_indicator_color, (int(hx), int(hy)), 20, 3)
-            
+             hx, hy = game_state.hand_position
+             color = game_state.pinch_indicator_color
+             
+             # Reticle style
+             size = 30
+             s = pygame.Surface((size*2, size*2), pygame.SRCALPHA)
+             
+             # Dynamic rotation? No time, just static cool reticle
+             pygame.draw.arc(s, color, (0, 0, size*2, size*2), 0, math.pi*2, 3)
+             pygame.draw.line(s, color, (size, 0), (size, size*0.6), 2)
+             pygame.draw.line(s, color, (size, size*2), (size, size*1.4), 2)
+             pygame.draw.line(s, color, (0, size), (size*0.6, size), 2)
+             pygame.draw.line(s, color, (size*2, size), (size*1.4, size), 2)
+             
+             self.screen.blit(s, (hx-size, hy-size))
+
+        # Win Screen
+        if game_state.game_won:
+             # Spawn confetti check
+             if random.random() < 0.3:
+                 self.spawn_particles(random.randint(0, self.width), 0, random.choice(DISK_COLORS))
+                 
+             win_panel = pygame.Rect(0, 0, 500, 250)
+             win_panel.center = (self.width//2, self.height//2)
+             self.draw_glass_panel(win_panel, 20)
+             
+             self.draw_neon_text("SYSTEM HACKED", self.title_font, (0, 255, 0), (self.width//2, self.height//2 - 50))
+             self.draw_neon_text("PUZZLE SOLVED", self.font, COLOR_WHITE, (self.width//2, self.height//2 + 10))
+             
+             # Instructions to reset
+             self.draw_neon_text("[ PRESS 'R' TO REBOOT ]", self.small_font, COLOR_TEXT_DIM, (self.width//2, self.height//2 + 60))
+
+        self.update_particles(1/60)
+        self.draw_particles()
+        self.draw_camera_preview()
+
+
+    def draw_play_screen(self, game_state):
+        self.create_background()
+        self.screen.blit(self.background_surface, (0,0))
+        
+        # Particles
+        if random.random() < 0.1:
+             self.spawn_particles(random.randint(0, self.width), self.height, random.choice(DISK_COLORS))
+        self.update_particles(1/60)
+        self.draw_particles()
+        
+        # Center Panel
+        panel_w, panel_h = 700, 500
+        panel_rect = pygame.Rect(0, 0, panel_w, panel_h)
+        panel_rect.center = (self.width//2, self.height//2)
+        self.draw_glass_panel(panel_rect, 20)
+        
+        # Title
+        self.draw_neon_text("NEON HANOI", self.title_font, (0, 255, 255), (self.width//2, panel_rect.top + 70))
+        self.draw_neon_text("GESTURE INTERFACE", self.font, (255, 0, 255), (self.width//2, panel_rect.top + 130))
+        
+        # Horizontal Divider
+        pygame.draw.line(self.screen, (100, 200, 255), (panel_rect.left + 50, panel_rect.top + 160), (panel_rect.right - 50, panel_rect.top + 160), 2)
+        
+        # Instructions
+        instr_y = panel_rect.top + 200
+        lines = [
+            "INITIATE SEQUENCE:",
+            "  [PINCH] thumb & index to manipulate data cores",
+            "  [DRAG]  to relocate cores between nodes",
+            "  [GOAL]  Transfer stack to Node 3",
+        ]
+        
+        for i, line in enumerate(lines):
+             col = (200, 255, 200) if i == 0 else COLOR_WHITE
+             fnt = self.small_font
+             self.draw_neon_text(line, fnt, col, (self.width//2, instr_y + i*35))
+        
+        # Play Button
+        self.play_button_rect.center = (self.width//2, panel_rect.bottom - 110)
+        
+        # Hover check
+        mouse_pos = pygame.mouse.get_pos()
+        hover = self.play_button_rect.collidepoint(mouse_pos)
+        
+        btn_col = (0, 255, 150) if hover else (0, 100, 200)
+        if hover:
+            pulse = (math.sin(time.time()*5)+1)/2 * 5
+            glow_rect = self.play_button_rect.inflate(pulse*2, pulse*2)
+            s = pygame.Surface((glow_rect.width, glow_rect.height), pygame.SRCALPHA)
+            pygame.draw.rect(s, (*btn_col, 80), s.get_rect(), border_radius=20)
+            self.screen.blit(s, glow_rect)
+        
+        pygame.draw.rect(self.screen, btn_col, self.play_button_rect, border_radius=20)
+        pygame.draw.rect(self.screen, (255, 255, 255), self.play_button_rect, 2, border_radius=20)
+        self.draw_neon_text("INITIALIZE", self.title_font, (0, 20, 20), self.play_button_rect.center)
+        
+        # Difficulty Controls
+        diff_y = panel_rect.bottom - 45
+        # Arrows drawn as triangles
+        arrow_size = 15
+        diff_bg = pygame.Rect(0, 0, 260, 40)
+        diff_bg.center = (self.width//2, diff_y)
+        self.draw_glass_panel(diff_bg, 10)
+        
+        self.draw_neon_text(f"DIFFICULTY: {game_state.num_disks}", self.small_font, COLOR_TEXT_GLOW, diff_bg.center)
+        
+        # Draw Arrow Hints
+        self.draw_neon_text("<", self.font, COLOR_WHITE, (diff_bg.left - 20, diff_y - 2))
+        self.draw_neon_text(">", self.font, COLOR_WHITE, (diff_bg.right + 20, diff_y - 2))
+        
         self.draw_camera_preview()
         
     def render(self, game_state):
