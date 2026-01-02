@@ -6,9 +6,13 @@ import time
 import os
 from collections import deque
 import mediapipe as mp
+import math
 
 class TowerOfHanoiGame:
     def __init__(self, num_disks=3):
+        # GUI settings
+        self.width, self.height = 1280, 720  # Higher resolution for better UI
+        
         # Initialize game state
         self.num_disks = num_disks
         self.towers = [deque(), deque(), deque()] 
@@ -22,8 +26,6 @@ class TowerOfHanoiGame:
         self.game_started = False
         self.show_play_screen = True
         
-        # GUI settings
-        self.width, self.height = 1280, 720  # Higher resolution for better UI
         self.tower_width = 20
         self.tower_height = 300
         self.tower_y = 250
@@ -35,6 +37,7 @@ class TowerOfHanoiGame:
         # Timer variables
         self.start_time = 0
         self.elapsed_time = 0
+        self.pickup_time = 0
         self.timer_active = False
         
         # Move counter
@@ -165,14 +168,65 @@ class TowerOfHanoiGame:
         
         return hand_landmarks, frame
     
+    def pickup_disc(self, tower_index):
+        """Improved disc pickup with better visual feedback"""
+        if self.towers[tower_index]:
+            self.disk_in_hand = self.towers[tower_index].pop()
+            self.selected_tower = tower_index
+            
+            # Enhanced visual feedback
+            self.pinch_indicator_color = (50, 200, 50, 230)  # Bright green when holding
+            self.show_action_message(f"Picked up disc {self.disk_in_hand} from tower {tower_index+1}")
+            
+            # Start tracking picked disc time for analytics
+            self.pickup_time = time.time()
+            return True
+        return False
+
+    def place_disc(self, tower_index):
+        """Improved disc placement with validation and feedback"""
+        if self.disk_in_hand is None:
+            return False
+            
+        # Check if the move is valid
+        if not self.towers[tower_index] or self.disk_in_hand < self.towers[tower_index][-1]:
+            # Valid move
+            self.towers[tower_index].append(self.disk_in_hand)
+            
+            # Track move analytics
+            self.moves += 1
+            move_time = time.time() - self.pickup_time
+            
+            # Give feedback based on move time
+            if move_time < 1.5:
+                self.show_action_message(f"Quick move! Disc {self.disk_in_hand} placed on tower {tower_index+1}")
+            else:
+                self.show_action_message(f"Disc {self.disk_in_hand} placed on tower {tower_index+1}")
+                
+            self.disk_in_hand = None
+            self.pinch_indicator_color = (255, 255, 255, 128)  # Reset to default
+            return True
+        else:
+            # Invalid move
+            self.show_action_message("Invalid move! Larger disc cannot go on smaller disc")
+            # Animated shake effect can be added here
+            
+            # Return disc to original tower
+            self.towers[self.selected_tower].append(self.disk_in_hand)
+            self.disk_in_hand = None
+            self.pinch_indicator_color = (255, 100, 100, 200)  # Red for invalid
+            return False
+
     def interpret_hand_gesture(self, hand_landmarks):
         if not hand_landmarks or len(hand_landmarks) < 3:
-            # If hand is lost, release any held disk
+            # If hand is lost, release any held disk with visual indication
             if self.disk_in_hand is not None and self.selected_tower is not None:
                 self.towers[self.selected_tower].append(self.disk_in_hand)
                 self.disk_in_hand = None
                 self.pinch_state = False
-                self.show_action_message("Disk released (hand lost)")
+                self.show_action_message("Disc returned (hand tracking lost)")
+                # Flash red indicator
+                self.pinch_indicator_color = (255, 0, 0, 200)
             return None
         
         # Get positions of index finger, thumb, and wrist
@@ -193,7 +247,7 @@ class TowerOfHanoiGame:
         camera_width = self.cap.get(cv2.CAP_PROP_FRAME_WIDTH)
         scaled_x = avg_x * (self.width / camera_width)
         
-        # Determine which tower the hand is over
+        # Determine which tower the hand is over with improved indicators
         if scaled_x < self.width / 3:
             tower_index = 0
         elif scaled_x < 2 * self.width / 3:
@@ -206,7 +260,7 @@ class TowerOfHanoiGame:
         # Detect pinch state (close fingers)
         is_pinching = distance < self.pinch_threshold
         
-        # State transitions
+        # State transitions with improved responsiveness
         if is_pinching and not self.pinch_state:
             # Just started pinching
             self.pinch_state = True
@@ -215,11 +269,9 @@ class TowerOfHanoiGame:
             
             # Pick up a disk if none in hand
             if self.disk_in_hand is None and self.towers[tower_index] and now - self.last_action_time > self.action_cooldown:
-                self.disk_in_hand = self.towers[tower_index].pop()
-                self.selected_tower = tower_index
+                self.pickup_disc(tower_index)  # Use new method
                 self.last_action_time = now
-                self.show_action_message(f"Picked up disk from tower {tower_index+1}")
-                return f"Picked up disk from tower {tower_index+1}"
+                return f"Picked up disc from tower {tower_index+1}"
                 
         elif not is_pinching and self.pinch_state:
             # Just released pinch
@@ -228,27 +280,25 @@ class TowerOfHanoiGame:
             
             # Place disk if one is in hand
             if self.disk_in_hand is not None and now - self.last_action_time > self.action_cooldown:
-                # Check if we can place the disk
-                if not self.towers[tower_index] or self.disk_in_hand < self.towers[tower_index][-1]:
-                    self.towers[tower_index].append(self.disk_in_hand)
-                    self.disk_in_hand = None
-                    self.moves += 1
+                # Use improved placement method
+                if self.place_disc(tower_index):
                     self.last_action_time = now
-                    self.show_action_message(f"Placed disk on tower {tower_index+1}")
-                    return f"Placed disk on tower {tower_index+1}"
+                    return f"Placed disc on tower {tower_index+1}"
                 else:
-                    # Invalid move, return disk to original tower
-                    self.towers[self.selected_tower].append(self.disk_in_hand)
-                    self.disk_in_hand = None
                     self.last_action_time = now
-                    self.show_action_message("Invalid move - Disk returned")
                     return "Invalid move"
         
         elif is_pinching:
-            # Continuing to pinch - update color based on pinch duration
+            # Continuing to pinch - update color based on pinch duration for better feedback
             hold_duration = now - self.pinch_hold_time
             if hold_duration > 0.5:  # Held for more than half a second
-                self.pinch_indicator_color = (0, 180, 0, 200)  # Darker green
+                if self.disk_in_hand is not None:
+                    # Pulsing effect when holding disc
+                    pulse = (math.sin(time.time() * 5) + 1) / 2  # Value between 0 and 1
+                    g_value = int(120 + pulse * 60)  # Green value pulsing between 120 and 180
+                    self.pinch_indicator_color = (0, g_value, 0, 200)
+                else:
+                    self.pinch_indicator_color = (0, 180, 0, 200)  # Darker green
         
         return None
     
@@ -256,7 +306,167 @@ class TowerOfHanoiGame:
         self.action_message = message
         self.action_message_time = time.time()
     
+    # Fixed play button alignment and UI
     def draw_play_screen(self):
+        # Start with a transparent background
+        self.screen.fill((0, 0, 0))  # Use solid black for cleaner UI
+        
+        # Draw a gradient background for better aesthetics
+        for i in range(self.height):
+            gradient_color = (15, 15, max(10, min(50, 30 + i // 10)), 255)
+            pygame.draw.line(self.screen, gradient_color, (0, i), (self.width, i))
+        
+        # Add a semi-transparent overlay for better UI visibility
+        overlay = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
+        overlay.fill((15, 15, 30, 200))  # Dark blue-black with alpha
+        self.screen.blit(overlay, (0, 0))
+        
+        # Draw title with shadow effect
+        title_shadow = self.title_font.render("Tower of Hanoi", True, (30, 30, 50))
+        title_text = self.title_font.render("Tower of Hanoi", True, (255, 255, 255))
+        subtitle_text = self.font.render("Gesture Controlled", True, (180, 180, 180))
+        
+        # Calculate exact center positions
+        title_rect = title_text.get_rect(center=(self.width//2, self.height//4))
+        shadow_rect = title_rect.copy()
+        shadow_rect.x += 2
+        shadow_rect.y += 2
+        subtitle_rect = subtitle_text.get_rect(center=(self.width//2, self.height//4 + 60))
+        
+        # Draw shadow then text
+        self.screen.blit(title_shadow, shadow_rect)
+        self.screen.blit(title_text, title_rect)
+        self.screen.blit(subtitle_text, subtitle_rect)
+        
+        # Draw instructions with improved box
+        instructions = [
+            "Control the game using your hand gestures:",
+            "• Use pinch gesture (thumb and index finger) to pick up discs",
+            "• Hold the pinch and move to position the disc",
+            "• Release the pinch to place the disc on a tower",
+            "• Win by moving all discs to the rightmost tower",
+            "",
+            ""
+        ]
+        
+        # Draw instruction box with rounded corners
+        instruction_box = pygame.Surface((600, 220), pygame.SRCALPHA)
+        instruction_box.fill((0, 0, 0, 150))
+        instruction_rect = instruction_box.get_rect(center=(self.width//2, self.height//2 - 80))
+        pygame.draw.rect(instruction_box, (65, 105, 225, 50), instruction_box.get_rect(), 2, border_radius=15)
+        self.screen.blit(instruction_box, instruction_rect)
+        
+        # Add a title to the instruction box
+        instr_title = self.font.render("How to Play", True, (180, 180, 255))
+        instr_title_rect = instr_title.get_rect(center=(self.width//2, instruction_rect.top + 25))
+        self.screen.blit(instr_title, instr_title_rect)
+        
+        for i, line in enumerate(instructions):
+            instruction_text = self.small_font.render(line, True, (200, 200, 200))
+            instruction_rect = instruction_text.get_rect(midleft=(instruction_rect.left + 30, instruction_rect.top + 55 + i*26))
+            self.screen.blit(instruction_text, instruction_rect)
+        
+        # Draw play button with proper centered alignment and improved appearance
+        self.play_button_rect = pygame.Rect(0, 0, 200, 60)
+        self.play_button_rect.center = (self.width//2, self.height//2 + 120)  # Fixed position
+        
+        # Draw button shadow for depth
+        shadow_rect = self.play_button_rect.copy()
+        shadow_rect.x += 4
+        shadow_rect.y += 4
+        pygame.draw.rect(self.screen, (30, 50, 100, 150), shadow_rect, border_radius=30)
+        
+        # Draw glowing effect for button
+        glow_size = int(5 + math.sin(time.time() * 3) * 2)  # Pulsing glow
+        for i in range(glow_size, 0, -1):
+            glow_alpha = 150 - i * 20
+            if glow_alpha > 0:
+                glow_rect = self.play_button_rect.inflate(i*2, i*2)
+                pygame.draw.rect(self.screen, (65, 105, 225, glow_alpha), glow_rect, border_radius=30+i)
+        
+        # Main button
+        pygame.draw.rect(self.screen, (65, 105, 225, 230), self.play_button_rect, border_radius=30)
+        pygame.draw.rect(self.screen, (100, 149, 237), self.play_button_rect, 3, border_radius=30)
+        
+        # Button text with shadow
+        play_shadow = self.font.render("PLAY", True, (30, 50, 100))
+        play_text = self.font.render("PLAY", True, (255, 255, 255))
+        
+        play_shadow_rect = play_shadow.get_rect(center=(self.play_button_rect.center[0]+1, self.play_button_rect.center[1]+1))
+        play_text_rect = play_text.get_rect(center=self.play_button_rect.center)
+        
+        self.screen.blit(play_shadow, play_shadow_rect)
+        self.screen.blit(play_text, play_text_rect)
+        
+        # Draw difficulty selection - more intuitive controls with better alignment
+        difficulty_box = pygame.Rect(0, 0, 300, 40)
+        difficulty_box.center = (self.width//2, self.height//2 + 200)  # Fixed position below play button
+        
+        # Draw difficulty background with rounded corners
+        pygame.draw.rect(self.screen, (0, 0, 0, 150), difficulty_box, border_radius=15)
+        pygame.draw.rect(self.screen, (100, 149, 237, 150), difficulty_box, 1, border_radius=15)
+        
+        # Draw arrows with hover effect
+        arrow_left_rect = pygame.Rect(difficulty_box.left + 10, difficulty_box.top, 40, 40)
+        arrow_right_rect = pygame.Rect(difficulty_box.right - 50, difficulty_box.top, 40, 40)
+        
+        # Check if mouse is over arrows
+        mouse_pos = pygame.mouse.get_pos()
+        left_hover = arrow_left_rect.collidepoint(mouse_pos)
+        right_hover = arrow_right_rect.collidepoint(mouse_pos)
+        
+        # Draw arrow with hover effect
+        left_color = (255, 255, 255) if left_hover else (200, 200, 200)
+        right_color = (255, 255, 255) if right_hover else (200, 200, 200)
+        
+        pygame.draw.polygon(self.screen, left_color, 
+                          [(arrow_left_rect.centerx - 10, arrow_left_rect.centery), 
+                            (arrow_left_rect.centerx + 5, arrow_left_rect.centery - 10),
+                            (arrow_left_rect.centerx + 5, arrow_left_rect.centery + 10)])
+        
+        pygame.draw.polygon(self.screen, right_color, 
+                          [(arrow_right_rect.centerx + 10, arrow_right_rect.centery), 
+                            (arrow_right_rect.centerx - 5, arrow_right_rect.centery - 10),
+                            (arrow_right_rect.centerx - 5, arrow_right_rect.centery + 10)])
+        
+        # Draw disk count with shadow
+        difficulty_shadow = self.font.render(f"Disks: {self.num_disks}", True, (30, 30, 50))
+        difficulty_text = self.font.render(f"Disks: {self.num_disks}", True, (255, 255, 255))
+        
+        shadow_rect = difficulty_shadow.get_rect(center=(difficulty_box.center[0]+1, difficulty_box.center[1]+1))
+        text_rect = difficulty_text.get_rect(center=difficulty_box.center)
+        
+        self.screen.blit(difficulty_shadow, shadow_rect)
+        self.screen.blit(difficulty_text, text_rect)
+        
+        # Draw camera feed in corner with an improved frame
+        if hasattr(self, 'camera_feed_surface') and self.camera_feed_surface is not None:
+            # Draw a stylish border for the camera feed
+            border_rect = pygame.Rect(self.width - 230, 10, 220, 170)
+            
+            # Draw outer glow
+            for i in range(3, 0, -1):
+                glow_rect = border_rect.copy()
+                glow_rect.inflate_ip(i*2, i*2)
+                pygame.draw.rect(self.screen, (100, 100, 200, 50-i*10), glow_rect, border_radius=10)
+            
+            # Draw main border
+            pygame.draw.rect(self.screen, (50, 50, 100, 180), border_rect, border_radius=8)
+            pygame.draw.rect(self.screen, (100, 149, 237), border_rect, 2, border_radius=8)
+            
+            # Display camera feed
+            self.screen.blit(self.camera_feed_surface, (self.width - 220, 20))
+            
+            # Add camera preview label with improved look
+            camera_bg = pygame.Surface((120, 25), pygame.SRCALPHA)
+            camera_bg.fill((0, 0, 0, 150))
+            camera_bg_rect = camera_bg.get_rect(center=(border_rect.centerx, border_rect.bottom + 15))
+            pygame.draw.rect(camera_bg, (0, 0, 0, 150), camera_bg.get_rect(), border_radius=8)
+            self.screen.blit(camera_bg, camera_bg_rect)
+            
+            camera_label = self.small_font.render("Camera Preview", True, (200, 200, 200))
+            camera_label_rect = camera_label.get_rect(center=camera_bg_rect.center)
+            self.screen.blit(camera_label, camera_label_rect)
         # Start with a transparent background
         self.screen.fill((0, 0, 0, 0))
         
@@ -619,304 +829,6 @@ class TowerOfHanoiGame:
         cv2.destroyAllWindows()
         sys.exit()
 
-# Enhanced disc handling mechanics
-def pickup_disc(self, tower_index):
-    """Improved disc pickup with better visual feedback"""
-    if self.towers[tower_index]:
-        self.disk_in_hand = self.towers[tower_index].pop()
-        self.selected_tower = tower_index
-        
-        # Enhanced visual feedback
-        self.pinch_indicator_color = (50, 200, 50, 230)  # Bright green when holding
-        self.show_action_message(f"Picked up disc {self.disk_in_hand} from tower {tower_index+1}")
-        
-        # Start tracking picked disc time for analytics
-        self.pickup_time = time.time()
-        return True
-    return False
-
-def place_disc(self, tower_index):
-    """Improved disc placement with validation and feedback"""
-    if self.disk_in_hand is None:
-        return False
-        
-    # Check if the move is valid
-    if not self.towers[tower_index] or self.disk_in_hand < self.towers[tower_index][-1]:
-        # Valid move
-        self.towers[tower_index].append(self.disk_in_hand)
-        
-        # Track move analytics
-        self.moves += 1
-        move_time = time.time() - self.pickup_time
-        
-        # Give feedback based on move time
-        if move_time < 1.5:
-            self.show_action_message(f"Quick move! Disc {self.disk_in_hand} placed on tower {tower_index+1}")
-        else:
-            self.show_action_message(f"Disc {self.disk_in_hand} placed on tower {tower_index+1}")
-            
-        self.disk_in_hand = None
-        self.pinch_indicator_color = (255, 255, 255, 128)  # Reset to default
-        return True
-    else:
-        # Invalid move
-        self.show_action_message("Invalid move! Larger disc cannot go on smaller disc")
-        # Animated shake effect can be added here
-        
-        # Return disc to original tower
-        self.towers[self.selected_tower].append(self.disk_in_hand)
-        self.disk_in_hand = None
-        self.pinch_indicator_color = (255, 100, 100, 200)  # Red for invalid
-        return False
-
-# Replace the interpret_hand_gesture method with this improved version
-def interpret_hand_gesture(self, hand_landmarks):
-    if not hand_landmarks or len(hand_landmarks) < 3:
-        # If hand is lost, release any held disk with visual indication
-        if self.disk_in_hand is not None and self.selected_tower is not None:
-            self.towers[self.selected_tower].append(self.disk_in_hand)
-            self.disk_in_hand = None
-            self.pinch_state = False
-            self.show_action_message("Disc returned (hand tracking lost)")
-            # Flash red indicator
-            self.pinch_indicator_color = (255, 0, 0, 200)
-        return None
-    
-    # Get positions of index finger, thumb, and wrist
-    index_finger_pos, thumb_pos, wrist_pos = hand_landmarks
-    
-    # Calculate distance between index finger and thumb (pinch detection)
-    distance = ((index_finger_pos[0] - thumb_pos[0]) ** 2 + 
-                (index_finger_pos[1] - thumb_pos[1]) ** 2) ** 0.5
-    
-    # Get the average position (center between fingers)
-    avg_x = (index_finger_pos[0] + thumb_pos[0]) // 2
-    avg_y = (index_finger_pos[1] + thumb_pos[1]) // 2
-    
-    # Save hand position for disk positioning
-    self.hand_position = (avg_x, avg_y)
-    
-    # Map x position to tower index (scaled to screen width)
-    camera_width = self.cap.get(cv2.CAP_PROP_FRAME_WIDTH)
-    scaled_x = avg_x * (self.width / camera_width)
-    
-    # Determine which tower the hand is over with improved indicators
-    if scaled_x < self.width / 3:
-        tower_index = 0
-    elif scaled_x < 2 * self.width / 3:
-        tower_index = 1
-    else:
-        tower_index = 2
-    
-    now = time.time()
-    
-    # Detect pinch state (close fingers)
-    is_pinching = distance < self.pinch_threshold
-    
-    # State transitions with improved responsiveness
-    if is_pinching and not self.pinch_state:
-        # Just started pinching
-        self.pinch_state = True
-        self.pinch_hold_time = now
-        self.pinch_indicator_color = (0, 255, 0, 180)  # Green
-        
-        # Pick up a disk if none in hand
-        if self.disk_in_hand is None and self.towers[tower_index] and now - self.last_action_time > self.action_cooldown:
-            self.pickup_disc(tower_index)  # Use new method
-            self.last_action_time = now
-            return f"Picked up disc from tower {tower_index+1}"
-            
-    elif not is_pinching and self.pinch_state:
-        # Just released pinch
-        self.pinch_state = False
-        self.pinch_indicator_color = (255, 255, 255, 128)  # White
-        
-        # Place disk if one is in hand
-        if self.disk_in_hand is not None and now - self.last_action_time > self.action_cooldown:
-            # Use improved placement method
-            if self.place_disc(tower_index):
-                self.last_action_time = now
-                return f"Placed disc on tower {tower_index+1}"
-            else:
-                self.last_action_time = now
-                return "Invalid move"
-    
-    elif is_pinching:
-        # Continuing to pinch - update color based on pinch duration for better feedback
-        hold_duration = now - self.pinch_hold_time
-        if hold_duration > 0.5:  # Held for more than half a second
-            if self.disk_in_hand is not None:
-                # Pulsing effect when holding disc
-                pulse = (math.sin(time.time() * 5) + 1) / 2  # Value between 0 and 1
-                g_value = int(120 + pulse * 60)  # Green value pulsing between 120 and 180
-                self.pinch_indicator_color = (0, g_value, 0, 200)
-            else:
-                self.pinch_indicator_color = (0, 180, 0, 200)  # Darker green
-    
-    return None
-
-# Fixed play button alignment and UI
-def draw_play_screen(self):
-    # Start with a transparent background
-    self.screen.fill((0, 0, 0))  # Use solid black for cleaner UI
-    
-    # Draw a gradient background for better aesthetics
-    for i in range(self.height):
-        gradient_color = (15, 15, max(10, min(50, 30 + i // 10)), 255)
-        pygame.draw.line(self.screen, gradient_color, (0, i), (self.width, i))
-    
-    # Add a semi-transparent overlay for better UI visibility
-    overlay = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
-    overlay.fill((15, 15, 30, 200))  # Dark blue-black with alpha
-    self.screen.blit(overlay, (0, 0))
-    
-    # Draw title with shadow effect
-    title_shadow = self.title_font.render("Tower of Hanoi", True, (30, 30, 50))
-    title_text = self.title_font.render("Tower of Hanoi", True, (255, 255, 255))
-    subtitle_text = self.font.render("Gesture Controlled", True, (180, 180, 180))
-    
-    # Calculate exact center positions
-    title_rect = title_text.get_rect(center=(self.width//2, self.height//4))
-    shadow_rect = title_rect.copy()
-    shadow_rect.x += 2
-    shadow_rect.y += 2
-    subtitle_rect = subtitle_text.get_rect(center=(self.width//2, self.height//4 + 60))
-    
-    # Draw shadow then text
-    self.screen.blit(title_shadow, shadow_rect)
-    self.screen.blit(title_text, title_rect)
-    self.screen.blit(subtitle_text, subtitle_rect)
-    
-    # Draw instructions with improved box
-    instructions = [
-        "Control the game using your hand gestures:",
-        "• Use pinch gesture (thumb and index finger) to pick up discs",
-        "• Hold the pinch and move to position the disc",
-        "• Release the pinch to place the disc on a tower",
-        "• Win by moving all discs to the rightmost tower",
-        "",
-        ""
-    ]
-    
-    # Draw instruction box with rounded corners
-    instruction_box = pygame.Surface((600, 220), pygame.SRCALPHA)
-    instruction_box.fill((0, 0, 0, 150))
-    instruction_rect = instruction_box.get_rect(center=(self.width//2, self.height//2 - 80))
-    pygame.draw.rect(instruction_box, (65, 105, 225, 50), instruction_box.get_rect(), 2, border_radius=15)
-    self.screen.blit(instruction_box, instruction_rect)
-    
-    # Add a title to the instruction box
-    instr_title = self.font.render("How to Play", True, (180, 180, 255))
-    instr_title_rect = instr_title.get_rect(center=(self.width//2, instruction_rect.top + 25))
-    self.screen.blit(instr_title, instr_title_rect)
-    
-    for i, line in enumerate(instructions):
-        instruction_text = self.small_font.render(line, True, (200, 200, 200))
-        instruction_rect = instruction_text.get_rect(midleft=(instruction_rect.left + 30, instruction_rect.top + 55 + i*26))
-        self.screen.blit(instruction_text, instruction_rect)
-    
-    # Draw play button with proper centered alignment and improved appearance
-    self.play_button_rect = pygame.Rect(0, 0, 200, 60)
-    self.play_button_rect.center = (self.width//2, self.height//2 + 120)  # Fixed position
-    
-    # Draw button shadow for depth
-    shadow_rect = self.play_button_rect.copy()
-    shadow_rect.x += 4
-    shadow_rect.y += 4
-    pygame.draw.rect(self.screen, (30, 50, 100, 150), shadow_rect, border_radius=30)
-    
-    # Draw glowing effect for button
-    glow_size = int(5 + math.sin(time.time() * 3) * 2)  # Pulsing glow
-    for i in range(glow_size, 0, -1):
-        glow_alpha = 150 - i * 20
-        if glow_alpha > 0:
-            glow_rect = self.play_button_rect.inflate(i*2, i*2)
-            pygame.draw.rect(self.screen, (65, 105, 225, glow_alpha), glow_rect, border_radius=30+i)
-    
-    # Main button
-    pygame.draw.rect(self.screen, (65, 105, 225, 230), self.play_button_rect, border_radius=30)
-    pygame.draw.rect(self.screen, (100, 149, 237), self.play_button_rect, 3, border_radius=30)
-    
-    # Button text with shadow
-    play_shadow = self.font.render("PLAY", True, (30, 50, 100))
-    play_text = self.font.render("PLAY", True, (255, 255, 255))
-    
-    play_shadow_rect = play_shadow.get_rect(center=(self.play_button_rect.center[0]+1, self.play_button_rect.center[1]+1))
-    play_text_rect = play_text.get_rect(center=self.play_button_rect.center)
-    
-    self.screen.blit(play_shadow, play_shadow_rect)
-    self.screen.blit(play_text, play_text_rect)
-    
-    # Draw difficulty selection - more intuitive controls with better alignment
-    difficulty_box = pygame.Rect(0, 0, 300, 40)
-    difficulty_box.center = (self.width//2, self.height//2 + 200)  # Fixed position below play button
-    
-    # Draw difficulty background with rounded corners
-    pygame.draw.rect(self.screen, (0, 0, 0, 150), difficulty_box, border_radius=15)
-    pygame.draw.rect(self.screen, (100, 149, 237, 150), difficulty_box, 1, border_radius=15)
-    
-    # Draw arrows with hover effect
-    arrow_left_rect = pygame.Rect(difficulty_box.left + 10, difficulty_box.top, 40, 40)
-    arrow_right_rect = pygame.Rect(difficulty_box.right - 50, difficulty_box.top, 40, 40)
-    
-    # Check if mouse is over arrows
-    mouse_pos = pygame.mouse.get_pos()
-    left_hover = arrow_left_rect.collidepoint(mouse_pos)
-    right_hover = arrow_right_rect.collidepoint(mouse_pos)
-    
-    # Draw arrow with hover effect
-    left_color = (255, 255, 255) if left_hover else (200, 200, 200)
-    right_color = (255, 255, 255) if right_hover else (200, 200, 200)
-    
-    pygame.draw.polygon(self.screen, left_color, 
-                      [(arrow_left_rect.centerx - 10, arrow_left_rect.centery), 
-                        (arrow_left_rect.centerx + 5, arrow_left_rect.centery - 10),
-                        (arrow_left_rect.centerx + 5, arrow_left_rect.centery + 10)])
-    
-    pygame.draw.polygon(self.screen, right_color, 
-                      [(arrow_right_rect.centerx + 10, arrow_right_rect.centery), 
-                        (arrow_right_rect.centerx - 5, arrow_right_rect.centery - 10),
-                        (arrow_right_rect.centerx - 5, arrow_right_rect.centery + 10)])
-    
-    # Draw disk count with shadow
-    difficulty_shadow = self.font.render(f"Disks: {self.num_disks}", True, (30, 30, 50))
-    difficulty_text = self.font.render(f"Disks: {self.num_disks}", True, (255, 255, 255))
-    
-    shadow_rect = difficulty_shadow.get_rect(center=(difficulty_box.center[0]+1, difficulty_box.center[1]+1))
-    text_rect = difficulty_text.get_rect(center=difficulty_box.center)
-    
-    self.screen.blit(difficulty_shadow, shadow_rect)
-    self.screen.blit(difficulty_text, text_rect)
-    
-    # Draw camera feed in corner with an improved frame
-    if hasattr(self, 'camera_feed_surface') and self.camera_feed_surface is not None:
-        # Draw a stylish border for the camera feed
-        border_rect = pygame.Rect(self.width - 230, 10, 220, 170)
-        
-        # Draw outer glow
-        for i in range(3, 0, -1):
-            glow_rect = border_rect.copy()
-            glow_rect.inflate_ip(i*2, i*2)
-            pygame.draw.rect(self.screen, (100, 100, 200, 50-i*10), glow_rect, border_radius=10)
-        
-        # Draw main border
-        pygame.draw.rect(self.screen, (50, 50, 100, 180), border_rect, border_radius=8)
-        pygame.draw.rect(self.screen, (100, 149, 237), border_rect, 2, border_radius=8)
-        
-        # Display camera feed
-        self.screen.blit(self.camera_feed_surface, (self.width - 220, 20))
-        
-        # Add camera preview label with improved look
-        camera_bg = pygame.Surface((120, 25), pygame.SRCALPHA)
-        camera_bg.fill((0, 0, 0, 150))
-        camera_bg_rect = camera_bg.get_rect(center=(border_rect.centerx, border_rect.bottom + 15))
-        pygame.draw.rect(camera_bg, (0, 0, 0, 150), camera_bg.get_rect(), border_radius=8)
-        self.screen.blit(camera_bg, camera_bg_rect)
-        
-        camera_label = self.small_font.render("Camera Preview", True, (200, 200, 200))
-        camera_label_rect = camera_label.get_rect(center=camera_bg_rect.center)
-        self.screen.blit(camera_label, camera_label_rect)
-
 # Main function to run the game
 def main():
     game = TowerOfHanoiGame(num_disks=3)
@@ -924,3 +836,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
