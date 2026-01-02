@@ -33,28 +33,25 @@ class GameRenderer:
         self.background_surface = None
         
     def prepare_camera_surface(self, frame):
+        # Frame is likely 640x480 from CV2
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        frame = np.rot90(frame)
-        frame = cv2.resize(frame, (240, 180))
+        
+        # Pygame expects (Width, Height, Channels), CV2 is (Height, Width, Channels)
+        # We need to transpose/swap axes 0 and 1
+        frame = np.swapaxes(frame, 0, 1)
+        
         frame = pygame.surfarray.make_surface(frame)
-        self.camera_feed_surface = frame
+        
+        # Scale to a reasonable preview size (maintaining 4:3 aspect ratio)
+        # 640x480 -> 320x240 (Half size is clearer than 240x180)
+        self.camera_feed_surface = pygame.transform.smoothscale(frame, (320, 240))
         
     def create_background(self):
         if self.background_surface is None:
             self.background_surface = pygame.Surface((self.width, self.height))
             self.background_surface.fill(COLOR_BG_DARK)
             
-            # Subtle Metallic Radial
-            cx, cy = self.width // 2, self.height // 2
-            max_dist = math.sqrt(cx**2 + cy**2)
-            
-            # Light center, slightly darker edges for focus
-            glow_surf = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
-            for r in range(int(max_dist), 0, -30):
-                alpha = int(50 * (r/max_dist)) # Darken edges
-                # pygame.draw.circle(glow_surf, (220, 230, 240), (cx, cy), r) 
-                
-            # Actually easier: simpler linear gradient top-down for "Studio" look
+            # Simple Metallic Gradient
             for y in range(self.height):
                 # Interpolate between Off-White and Light-Steel-Blue
                 ratio = y / self.height
@@ -106,12 +103,12 @@ class GameRenderer:
         shadow_rect.x += 4
         shadow_rect.y += 4
         shadow_surf = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
-        pygame.draw.rect(shadow_surf, (0, 0, 0, 40), shadow_surf.get_rect(), border_radius=border_radius)
+        pygame.draw.rect(shadow_surf, (0, 0, 0, 30), shadow_surf.get_rect(), border_radius=border_radius)
         self.screen.blit(shadow_surf, shadow_rect)
         
         # Glass Body
         s = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
-        s.fill((255, 255, 255, 200)) # Milky white
+        s.fill((255, 255, 255, 180)) # Milky white
         pygame.draw.rect(s, (255, 255, 255, 100), s.get_rect(), border_radius=border_radius)
         self.screen.blit(s, rect)
         
@@ -132,7 +129,8 @@ class GameRenderer:
         
     def draw_camera_preview(self):
          if self.camera_feed_surface:
-            rect_w, rect_h = 240, 180
+            # Dimensions: 320x240
+            rect_w, rect_h = 320, 240
             padding = 10
             x = self.width - rect_w - 30
             y = 30
