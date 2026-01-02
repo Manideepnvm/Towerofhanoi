@@ -1,43 +1,45 @@
 # Screen settings
 SCREEN_WIDTH = 1280
 SCREEN_HEIGHT = 720
-FPS = 60  # Smoother animation
+FPS = 60
 
 # Tower settings
-TOWER_WIDTH = 6
+TOWER_WIDTH = 15 # Thicker for solid look
 TOWER_HEIGHT = 300
 TOWER_Y = 250
-TOWER_BASE_WIDTH = 100
-TOWER_BASE_HEIGHT = 10
+TOWER_BASE_WIDTH = 140
+TOWER_BASE_HEIGHT = 15
 
 # Disk settings
-DISK_HEIGHT = 35
+DISK_HEIGHT = 40 # Thicker disks
 BASE_DISK_WIDTH = 220
-DISK_ROUNDING = 15
+DISK_ROUNDING = 8 # Less rounded, more machined
 
-# Neon Palette (Cyberpunk Theme)
-COLOR_BG_DARK = (5, 5, 10)       # Deep Void
-COLOR_BG_LIGHT = (20, 20, 40)    # Outer Glow
-COLOR_GRID = (30, 30, 50, 50)    # Subtle Grid
+# Theme: Crystal & Metal (Professional, High Contrast)
+COLOR_BG_DARK = (245, 247, 250)     # Off-white / Metallic Mist
+COLOR_BG_LIGHT = (255, 255, 255)    # Pure White
+COLOR_GRID = (200, 210, 220, 100)   # Subtle Steel Grid
 
-# Neon Colors for Disks (Bright, Saturated)
+# Metal Colors (Gradients are procedural, these are base tones)
+# We will define base tones for specific metal types
 DISK_COLORS = [
-    (255, 0, 85),    # Neon Red/Pink
-    (0, 255, 136),   # Neon Seafoam
-    (0, 204, 255),   # Neon Cyan
-    (255, 230, 0),   # Neon Yellow
-    (180, 0, 255)    # Neon Purple
+    (255, 215, 0),   # Gold
+    (192, 192, 192), # Silver
+    (205, 127, 50),  # Bronze
+    (184, 115, 51),  # Copper
+    (112, 128, 144)  # Slate/Steel
 ]
 
-# UI Colors
-COLOR_WHITE = (240, 240, 255)
-COLOR_TEXT_GLOW = (200, 220, 255)
-COLOR_TEXT_DIM = (100, 120, 150)
+# UI Colors (Crystal Clear)
+COLOR_WHITE = (10, 10, 20)           # Actually Dark Blue-Black for Text (High Contrast)
+COLOR_TEXT_GLOW = (255, 255, 255)    # No glow, but maybe highlight
+COLOR_TEXT_DIM = (80, 90, 100)       # Dark Gray
+COLOR_OVERLAY = (255, 255, 255, 150) # Frosted Glass
 
 # Tower Colors
-COLOR_TOWER_GLOW = (100, 200, 255)
-COLOR_TOWER_CORE = (200, 240, 255)
-COLOR_BASE_GLOW = (50, 100, 150)
+COLOR_TOWER_GLOW = (200, 200, 200) # Shiny highlight
+COLOR_TOWER_CORE = (100, 100, 100) # Dark Steel rod
+COLOR_BASE_GLOW = (160, 160, 160)  # Polished Base
 
 # Hand tracking
 PINCH_THRESHOLD = 50
@@ -45,10 +47,10 @@ ACTION_COOLDOWN = 0.3
 ACTION_MESSAGE_DURATION = 2.0
 
 # Pinch Indicator
-PINCH_COLOR_IDLE = (200, 200, 255, 100)
-PINCH_COLOR_ACTIVE = (0, 255, 150, 200)
-PINCH_COLOR_ERROR = (255, 50, 50, 200)
+PINCH_COLOR_IDLE = (100, 100, 100, 100)
+PINCH_COLOR_ACTIVE = (0, 120, 255, 200) # Professional Blue
+PINCH_COLOR_ERROR = (200, 50, 50, 200)
 
-# Particle Settings
-PARTICLE_COUNT = 20
-PARTICLE_LIFETIME = 1.0  # Seconds
+# Particle Settings (Subtle glints)
+PARTICLE_COUNT = 10
+PARTICLE_LIFETIME = 0.5
