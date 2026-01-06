@@ -23,11 +23,12 @@ COLOR_GRID = (200, 210, 220, 100)   # Subtle Steel Grid
 # Metal Colors (Gradients are procedural, these are base tones)
 # We will define base tones for specific metal types
 DISK_COLORS = [
+    (220, 20, 60),   # Ruby Red
+    (46, 139, 87),   # Emerald Green
+    (65, 105, 225),  # Sapphire Blue
+    (153, 50, 204),  # Amethyst Purple
     (255, 215, 0),   # Gold
-    (192, 192, 192), # Silver
-    (205, 127, 50),  # Bronze
-    (184, 115, 51),  # Copper
-    (112, 128, 144)  # Slate/Steel
+    (0, 206, 209)    # Turquoise
 ]
 
 # UI Colors (Crystal Clear)
